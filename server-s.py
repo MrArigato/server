@@ -3,7 +3,6 @@ import sys
 import signal
 import select
 
-# Flag to control the server's main loop
 running = True
 
 def handle_signal(signum, frame):
@@ -11,21 +10,20 @@ def handle_signal(signum, frame):
     running = False
     print("Signal received, shutting down the server.")
 
-# Register signal handlers for graceful termination
 signal.signal(signal.SIGINT, handle_signal)
 signal.signal(signal.SIGTERM, handle_signal)
 signal.signal(signal.SIGQUIT, handle_signal)
 
 def main(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
-        try:
-            server_socket.bind(('0.0.0.0', port))
-            server_socket.listen(10)  # Listen for connections, support up to 10 simultaneous connections
-            server_socket.setblocking(False)  # Set socket to non-blocking mode
-            
-            print(f"Server is listening on port {port}...")
-            
-            while running:
+        server_socket.bind(('0.0.0.0', port))
+        server_socket.listen(10)
+        server_socket.setblocking(False)
+        
+        print(f"Server is listening on port {port}...")
+        
+        while running:
+            try:
                 ready_to_read, _, _ = select.select([server_socket], [], [], 1)
                 if ready_to_read:
                     client_socket, addr = server_socket.accept()
@@ -34,21 +32,17 @@ def main(port):
                     
                     total_received = 0
                     while running:
-                        try:
-                            data = client_socket.recv(4096)
-                            if not data:
-                                break
-                            total_received += len(data)
-                        except socket.error:
+                        data = client_socket.recv(4096)
+                        if not data:
                             break
+                        total_received += len(data)
                     
                     print(f"Connection closed. Bytes received: {total_received}")
                     client_socket.close()
-        except Exception as e:
-            sys.stderr.write(f"ERROR: {e}\n")
-            sys.exit(1)
-        finally:
-            print("Server stopped gracefully.")
+            except Exception as e:
+                print(f"Error accepting connection: {e}")
+
+        print("Server stopped gracefully.")
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
@@ -56,4 +50,8 @@ if __name__ == "__main__":
         sys.exit(1)
     
     port = int(sys.argv[1])
-    main(port)
+    try:
+        main(port)
+    except Exception as e:
+        sys.stderr.write(f"ERROR: {e}\n")
+        sys.exit(1)
