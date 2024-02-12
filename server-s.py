@@ -1,51 +1,70 @@
-import argparse
 import socket
-import signal
 import sys
+import signal
+import select
 import time
 
-# Global for shutdown
-not_stopped = True
+def handle_signal(signum, frame):
+    global running
+    running = False
+    print("Signal received, shutting down the server.", file=sys.stderr)
 
-# Signal handler
-def signal_handler(sig, frame):
-    global not_stopped
-    print("Received signal {}, gracefully shutting down...".format(sig))
-    not_stopped = False
+# Register signal handlers
+signal.signal(signal.SIGINT, handle_signal)
+signal.signal(signal.SIGTERM, handle_signal)
+signal.signal(signal.SIGQUIT, handle_signal)
 
-def main():
-    # Command-line argument parsing with custom validation
-    parser = argparse.ArgumentParser(description='Server for file receiving.')
-    parser.add_argument('port', type=int, 
-                        help='Port number to listen on.', 
-                        choices=range(0, 65536)) 
-
-    args = parser.parse_args()
-
-    # Setup signal handling
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGQUIT, signal_handler)
-
-    # Socket initialization
-    host = '0.0.0.0'  # Listen on all interfaces
-    port = args.port
-
+def main(port):
+    global running
+    running = True
+    
     try:
-        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server_socket.bind((host, port))
-        server_socket.listen(10)  
-        print("Server listening on port {}".format(port))
-    except socket.error as msg:
-        if isinstance(msg, OverflowError):
-            sys.stderr.write("ERROR: Invalid port number. Port must be between 0 and 65535.\n")
-        else:
-            sys.stderr.write("ERROR: {}\n".format(msg)) 
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
+            server_socket.bind(('0.0.0.0', port))
+            server_socket.listen(10)  # Listen for up to 10 connections
+            server_socket.setblocking(False)
+            
+            print(f"Server is listening on port {port}...")
+            
+            while running:
+                try:
+                    ready_to_read, _, _ = select.select([server_socket], [], [], 1)
+                    if ready_to_read:
+                        client_socket, addr = server_socket.accept()
+                        print(f"Connection accepted from {addr}")
+                        client_socket.settimeout(10)  # Set timeout for the connection
+                        
+                        client_socket.sendall(b"accio\r\n")
+                        
+                        total_received = 0
+                        while running:
+                            try:
+                                data = client_socket.recv(4096)
+                                if not data:
+                                    break
+                                total_received += len(data)
+                            except socket.timeout:
+                                print("ERROR", file=sys.stderr)
+                                break
+                        
+                        print(f"Connection closed. Bytes received: {total_received}")
+                        client_socket.close()
+                except Exception as e:
+                    print(f"Error accepting connection: {e}", file=sys.stderr)
+    except Exception as e:
+        print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Connection Handling Loop 
-    while not_stopped:
-        # ... (Rest of your connection handling code) 
-
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        sys.stderr.write("ERROR: Usage: python3 server-s.py <PORT>\n")
+        sys.exit(1)
+    
+    port = None
+    try:
+        port = int(sys.argv[1])
+    except ValueError:
+        sys.stderr.write("ERROR: Port must be a number.\n")
+        sys.exit(1)
+    
+    main(port)
